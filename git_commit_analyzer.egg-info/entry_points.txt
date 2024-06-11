@@ -1,0 +1,2 @@
+[console_scripts]
+git-commit-analyzer = git_commit_analyzer.main:main

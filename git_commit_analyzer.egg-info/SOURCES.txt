@@ -1,0 +1,13 @@
+README.md
+setup.py
+git_commit_analyzer/__init__.py
+git_commit_analyzer/analyzer.py
+git_commit_analyzer/git_log.py
+git_commit_analyzer/main.py
+git_commit_analyzer/user_db.py
+git_commit_analyzer.egg-info/PKG-INFO
+git_commit_analyzer.egg-info/SOURCES.txt
+git_commit_analyzer.egg-info/dependency_links.txt
+git_commit_analyzer.egg-info/entry_points.txt
+git_commit_analyzer.egg-info/requires.txt
+git_commit_analyzer.egg-info/top_level.txt

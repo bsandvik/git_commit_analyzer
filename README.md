@@ -1,0 +1,53 @@
+# Git Commit Analyzer
+
+A tool to analyze git commit distribution.
+
+## Installation
+
+To install the package, run:
+
+```sh
+pip install .
+```
+
+## Usage
+
+To use the tool after installing, run
+
+```
+git-commit-analyzer [options]
+```
+
+## Options
+
+- `--sort-by`: Column to sort by (default: commits)
+- `--extra-user-info`: Include GitHub username as an additional column
+- `--add-user`: Add or update a user in the database
+- `--email`: Email of the user
+- `--full-name`: Full name of the user
+- `--alternate-user`: Comma-separated list of alternate usernames
+- `--alternate-email`: Comma-separated list of alternate emails
+- `--team`: Team of the user
+- `--debug`: Print debug information
+- `--since`: Start date for filtering commits (YYYY-MM-DD)
+- `--until`: End date for filtering commits (YYYY-MM-DD)
+
+## Examples
+
+To analyze commits within a date range
+
+`git-commit-analyzer --since 2024-05-01 --until 2024-06-01`
+
+To analyze commits for a specific team, eg. Atlas
+
+`git-commit-analyzer --team Atlas`
+
+To add or update a user in the database
+
+`git-commit-analyzer --add-user --email user@example.com --full-name "User Name" --alternate-user altuser --alternate-email altuser@example.com --team TeamName`
+
+To sort output by the number of lines added
+
+`git-commit-analyzer --sort-by lines_added`
+
+For debug information, add `--debug` to any command line

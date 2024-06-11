@@ -1,0 +1,195 @@
+#!/usr/bin/env python3
+
+import subprocess
+import pandas as pd
+import re
+import argparse
+import json
+import os
+import sys
+from datetime import datetime
+
+USER_DB_PATH = os.path.expanduser("~/etc/users.json")
+
+def load_user_db():
+    if not os.path.exists(USER_DB_PATH):
+        return {"users": []}
+    with open(USER_DB_PATH, "r") as f:
+        return json.load(f)
+
+def save_user_db(db):
+    os.makedirs(os.path.dirname(USER_DB_PATH), exist_ok=True)
+    with open(USER_DB_PATH, "w") as f:
+        json.dump(db, f, indent=4)
+
+def add_or_update_user(email, full_name=None, alternate_user_names=None, alternate_emails=None, team=None):
+    db = load_user_db()
+    user_exists = False
+    for user in db["users"]:
+        if user["email"] == email:
+            user_exists = True
+            if full_name:
+                user["full_name"] = full_name
+            if alternate_user_names:
+                user["alternate_user_names"] = alternate_user_names
+            if alternate_emails:
+                user["alternate_emails"] = alternate_emails
+            if team:
+                user["team"] = team
+            break
+    if not user_exists:
+        user = {
+            "email": email,
+            "full_name": full_name,
+            "alternate_user_names": alternate_user_names or [],
+            "alternate_emails": alternate_emails or [],
+            "team": team
+        }
+        db["users"].append(user)
+    save_user_db(db)
+    print(f"Added/Updated user: {full_name} with email {email}")
+
+def get_main_email_and_name(email, username, user_db):
+    for user in user_db["users"]:
+        if email == user["email"] or email in user["alternate_emails"] or username in user["alternate_user_names"]:
+            return user["email"], user["full_name"]
+    return email, username
+
+def get_git_log():
+    pretty_format = "%H|%an|%ae|%ad"
+    result = subprocess.run(
+        ["git", "log", f"--pretty=format:{pretty_format}", "--date=iso", "--numstat"],
+        capture_output=True, text=True
+    )
+    return result.stdout
+
+def parse_git_log(log, user_db, debug=False):
+    commits = []
+    current_commit = None
+    for line in log.splitlines():
+        if re.match(r"^[a-f0-9]{40}", line):
+            if current_commit:
+                commits.append(current_commit)
+            parts = line.split('|')
+            commit_hash = parts[0]
+            author_name = parts[1]
+            author_email = parts[2]
+            timestamp = parts[3]
+            main_email, full_name = get_main_email_and_name(author_email, author_name, user_db)
+            author_full = full_name
+            current_commit = {
+                "commit_hash": commit_hash,
+                "author_full": author_full,
+                "timestamp": timestamp,
+                "lines_added": 0,
+                "lines_removed": 0
+            }
+            if debug:
+                print(f"hash {commit_hash}")
+                print(f"author_name {author_name}")
+                print(f"author_email {author_email}")
+                print(f"timestamp {timestamp}")
+                print(f"main_email {main_email}")
+                print(f"author_full {author_full}")
+        elif re.match(r"^\d+\s+\d+", line):
+            added, removed, _ = line.split(maxsplit=2)
+            current_commit["lines_added"] += int(added)
+            current_commit["lines_removed"] += int(removed)
+    if current_commit:
+        commits.append(current_commit)
+    return commits
+
+def filter_commits_by_date(commits, start_date=None, end_date=None):
+    if start_date:
+        commits = [commit for commit in commits if commit['timestamp'] >= start_date]
+    if end_date:
+        commits = [commit for commit in commits if commit['timestamp'] <= end_date]
+    return commits
+
+def analyze_commits(commits, team=None, user_db=None):
+    df = pd.DataFrame(commits)
+
+    if team:
+        team_users = {user["full_name"] for user in user_db["users"] if user.get("team", "").lower() == team.lower()}
+        df = df[df['author_full'].isin(team_users)]
+
+    summary = df.groupby('author_full').agg({
+        'commit_hash': 'count',
+        'lines_added': 'sum',
+        'lines_removed': 'sum'
+    }).rename(columns={'commit_hash': 'commits'}).reset_index().rename(columns={'author_full': 'Author'})
+
+    # Calculate percentages
+    total_commits = summary['commits'].sum()
+    total_lines_added = summary['lines_added'].sum()
+    summary['%_commits'] = (summary['commits'] / total_commits * 100).round(2)
+    summary['%_lines_added'] = (summary['lines_added'] / total_lines_added * 100).round(2)
+
+    # Add totals row
+    totals = {
+        'Author': 'TOTAL',
+        'commits': total_commits,
+        'lines_added': total_lines_added,
+        'lines_removed': summary['lines_removed'].sum(),
+        '%_commits': 100.00,
+        '%_lines_added': 100.00
+    }
+
+    summary = pd.concat([summary, pd.DataFrame([totals])], ignore_index=True)
+    return summary
+
+def main():
+    parser = argparse.ArgumentParser(description='Analyze git commit distribution.')
+    parser.add_argument('--sort-by', type=str, default='commits', help='Column to sort by (default: commits)')
+    parser.add_argument('--extra-user-info', action='store_true', help='Include GitHub username as an additional column')
+    parser.add_argument('--add-user', action='store_true', help='Add or update a user in the database')
+    parser.add_argument('--email', type=str, help='Email of the user')
+    parser.add_argument('--full-name', type=str, help='Full name of the user')
+    parser.add_argument('--alternate-user', type=str, help='Comma-separated list of alternate usernames')
+    parser.add_argument('--alternate-email', type=str, help='Comma-separated list of alternate emails')
+    parser.add_argument('--team', type=str, help='Team of the user')
+    parser.add_argument('--debug', action='store_true', help='Print debug information')
+    parser.add_argument('--since', type=str, dest='start_date', help='Start date for filtering commits (YYYY-MM-DD)')
+    parser.add_argument('--until', type=str, dest='end_date', help='End date for filtering commits (YYYY-MM-DD)')
+    args = parser.parse_args()
+
+    if args.add_user:
+        if not args.email or not args.full_name:
+            parser.error("--email and --full-name are required when using --add-user")
+        alternate_user_names = args.alternate_user.split(',') if args.alternate_user else []
+        alternate_emails = args.alternate_email.split(',') if args.alternate_email else []
+        add_or_update_user(
+            email=args.email,
+            full_name=args.full_name,
+            alternate_user_names=alternate_user_names,
+            alternate_emails=alternate_emails,
+            team=args.team
+        )
+        return
+
+    user_db = load_user_db()
+    log = get_git_log()
+    commits = parse_git_log(log, user_db, debug=args.debug)
+
+    if args.start_date or args.end_date:
+        start_date = args.start_date + "T00:00:00" if args.start_date else None
+        end_date = args.end_date + "T23:59:59" if args.end_date else None
+        commits = filter_commits_by_date(commits, start_date=start_date, end_date=end_date)
+
+    summary = analyze_commits(commits, team=args.team, user_db=user_db)
+
+    # Extract the totals row before sorting
+    totals = summary[summary['Author'] == 'TOTAL']
+    summary = summary[summary['Author'] != 'TOTAL']
+
+    # Sort by the specified column
+    if args.sort_by in summary.columns:
+        summary = summary.sort_values(by=args.sort_by, ascending=False)
+
+    # Append the totals row back to the bottom
+    summary = pd.concat([summary, totals], ignore_index=True)
+
+    print(summary.to_string(index=False))
+
+if __name__ == "__main__":
+    main()
