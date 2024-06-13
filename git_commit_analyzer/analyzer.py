@@ -25,6 +25,19 @@ def analyze_commits(commits, team=None, user_db=None):
         'lines_removed': 'sum'
     }).rename(columns={'commit_hash': 'commits'}).reset_index().rename(columns={'author_full': 'Author'})
 
+    if team:
+        team_users = {user["full_name"] for user in user_db["users"] if user.get("team", "").lower() == team.lower()}
+        for member in team_users:
+            if member not in summary['Author'].values:
+                summary = pd.concat([summary, pd.DataFrame([{
+                    'Author': member,
+                    'commits': 0,
+                    'lines_added': 0,
+                    'lines_removed': 0,
+                    '%_commits': 0.00,
+                    '%_lines_added': 0.00
+                }])], ignore_index=True)
+
     # Calculate percentages
     total_commits = summary['commits'].sum()
     total_lines_added = summary['lines_added'].sum()
